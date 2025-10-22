@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>こいのまえ｜5因子ノベル診断</title>
+  <meta name="description" content="恋愛前教育サービス『こいのまえ』の5因子ノベル診断。選択に応じて5因子をスコアリングし、32タイプの結果を表示します。">
+  <style>
+    html, body { margin:0; padding:0; background:#fff; color:#111; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP","Segoe UI",Roboto,Arial; }
+    .wrap { max-width: 680px; margin: 0 auto; padding: 20px; }
+    .card { background:#fafafa; border:1px solid #eee; border-radius:14px; padding:20px; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .row { display:flex; align-items:center; gap:10px; }
+    .pill { display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e5e5; color:#444; background:#fff; }
+    .muted { color:#777; font-size:13px; }
+    .progress { height:8px; background:#eee; border-radius:999px; overflow:hidden; }
+    .progress>span { display:block; height:100%; width:0%; background:#111; transition:width .25s ease; }
+    h1 { font-size:20px; margin:0 0 6px; letter-spacing:.02em; }
+    .sub { color:#666; font-size:13px; margin-bottom:14px; }
+    .scene { font-size:18px; line-height:1.75; white-space:pre-wrap; }
+    .choices { display:grid; gap:10px; margin-top:16px; }
+    button.choice { width:100%; text-align:left; border:1px solid #e5e5e5; border-radius:12px; padding:14px 16px; background:#fff; cursor:pointer; font-size:16px; line-height:1.5; }
+    button.choice:active { transform: translateY(1px); }
+    .foot { margin-top:18px; display:flex; justify-content:space-between; align-items:center; }
+    .ghost { background:#f7f7f7; border-color:#e7e7e7; }
+    .center { text-align:center; }
+    .result-badge { font-weight:700; font-size:18px; padding:8px 12px; border-radius: 12px; display:inline-block; background:#111; color:#fff; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .small { font-size:12px; color:#666; }
+    a.btn { display:inline-block; text-decoration:none; padding:12px 14px; border-radius:10px; border:1px solid #e5e5e5; }
+    .primary { background:#111; color:#fff; border-color:#111; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="row">
+        <span class="pill">β</span>
+        <strong style="font-size:14px;">こいのまえ｜5因子診断</strong>
+      </div>
+      <span id="stepLabel" class="muted"></span>
+    </div>
+
+    <div class="progress" aria-hidden="true"><span id="pg"></span></div>
+
+    <div id="app" class="card" role="group" aria-live="polite"></div>
+
+    <div class="foot">
+      <button id="backBtn" class="choice ghost" style="max-width:160px;">← 戻る</button>
+      <span class="small">v0.1 mini • Single-file prototype</span>
+    </div>
+  </div>
+
+<script>
+/* =========================================================
+   5因子ノベル診断（単一HTML）
+   - 因子スコア集計 → 2値化 → 32タイプへマッピング
+   - そのままGitHub Pagesで動作
+   TODO:
+    1) FACTORSの文言最終化
+    2) TYPE_BOOKの32タイプ名・コピーを正式版に置換
+    3) SCENESを増やして精度UP（10〜15問推奨）
+========================================================= */
+
+// ====== 因子定義（左右のラベルは結果表示時のテキストに使う） ======
+const FACTORS = [
+  { key: "anx", labelL: "回避", labelR: "不安", name: "愛着（不安↔回避）" },
+  { key: "cau", labelL: "突破", labelR: "慎重", name: "慎重性（突破↔慎重）" },
+  { key: "dep", labelL: "自立", labelR: "依存", name: "自立性（自立↔依存）" },
+  { key: "exp", labelL: "抑制", labelR: "開示", name: "感情表現（抑制↔開示）" },
+  { key: "ide", labelL: "現実", labelR: "理想", name: "理想志向（現実↔理想）" },
+];
+
+// ====== 32タイプ辞書（ダミー）。正式版に置換して使ってください ======
+const TYPE_BOOK = (() => {
+  const list = [];
+  for (let i=0;i<32;i++){
+    const bits = i.toString(2).padStart(5,"0"); // anx,cau,dep,exp,ide の順で 0/1
+    list.push({
+      code: "T" + bits,
+      name: `タイプ ${bits}`,
+      copy: "（仮）ここにタイプの説明コピーを入れてください。",
+    });
+  }
+  return list;
+})();
+
+// ====== シーン（サンプル5問＋導入）。choices.effect で因子に加点 ======
+const SCENES = [
+  {
+    id: "intro",
+    text: "初めまして。ここは“恋の前”を整えるための短い診断です。\\nシーンごとに直感で選んでください。",
+    choices: [
+      { label: "はじめる", next: "s1" }
+    ]
+  },
+  {
+    id: "s1",
+    text: "気になる相手から返信が少し遅い。あなたは？",
+    choices: [
+      { label: "自分の発言を見直し、不安になる", effect: { anx:+1 }, next: "s2" },
+      { label: "相手にも用事がある、と割り切る", effect: { anx:-1 }, next: "s2" },
+    ]
+  },
+  {
+    id: "s2",
+    text: "デートの段取り、どう決める？",
+    choices: [
+      { label: "相手の意見を待って慎重に詰める", effect: { cau:+1 }, next: "s3" },
+      { label: "まず自分で案を出し前に進める", effect: { cau:-1 }, next: "s3" },
+    ]
+  },
+  {
+    id: "s3",
+    text: "弱みの共有についてのスタンスは？",
+    choices: [
+      { label: "タイミングが来たら素直に開示する", effect: { exp:+1 }, next: "s4" },
+      { label: "必要になるまで自分で抱える", effect: { exp:-1 }, next: "s4" },
+    ]
+  },
+  {
+    id: "s4",
+    text: "相手と自分の距離感、心地よいのは？",
+    choices: [
+      { label: "寄り添って一緒に考えたい", effect: { dep:+1 }, next: "s5" },
+      { label: "互いの自立を前提に動きたい", effect: { dep:-1 }, next: "s5" },
+    ]
+  },
+  {
+    id: "s5",
+    text: "恋における理想と現実、どちら寄り？",
+    choices: [
+      { label: "ドラマチックさや運命も大事", effect: { ide:+1 }, next: "result" },
+      { label: "地に足のついた積み上げ重視", effect: { ide:-1 }, next: "result" },
+    ]
+  },
+];
+
+// ====== 状態管理 ======
+const State = {
+  idx: 0,
+  history: [], // 戻る用
+  sceneMap: new Map(SCENES.map(s => [s.id, s])),
+  order: SCENES.map(s => s.id),
+  factors: Object.fromEntries(FACTORS.map(f => [f.key, 0])),
+};
+
+// 進捗（%）
+function progressPercent(){
+  const endIndex = State.order.indexOf("result") >= 0 ? State.order.indexOf("result") : State.order.length-1;
+  const cur = Math.min(State.idx, endIndex);
+  const pct = Math.round((cur / endIndex) * 100);
+  return isFinite(pct) ? Math.min(Math.max(pct,0),100) : 0;
+}
+
+// ====== 描画 ======
+const app = document.getElementById("app");
+const pg = document.getElementById("pg");
+const stepLabel = document.getElementById("stepLabel");
+const backBtn = document.getElementById("backBtn");
+
+backBtn.addEventListener("click", () => goBack());
+
+function render(){
+  pg.style.width = progressPercent() + "%";
+  stepLabel.textContent = stepText();
+
+  const sceneId = State.order[State.idx];
+  if (sceneId === "result") {
+    app.innerHTML = resultView();
+    backBtn.style.visibility = "visible";
+    return;
+  }
+  const scene = State.sceneMap.get(sceneId);
+  backBtn.style.visibility = State.idx > 0 ? "visible" : "hidden";
+
+  app.innerHTML = `
+    <h1>シーン ${State.idx}/${State.order.indexOf("result")}</h1>
+    <div class="sub">${FACTORS.map(f => f.name.split("（")[0]).join("・")} をさぐる</div>
+    <div class="scene">${escapeHtml(scene.text)}</div>
+    <div class="choices">
+      ${scene.choices.map((ch, i) => `
+        <button class="choice" data-i="${i}" aria-label="選択肢 ${i+1}">${escapeHtml(ch.label)}</button>
+      `).join("")}
+    </div>
+  `;
+
+  app.querySelectorAll("button.choice").forEach(btn => {
+    btn.addEventListener("click", onChoice);
+  });
+}
+
+function onChoice(e){
+  const sceneId = State.order[State.idx];
+  const scene = State.sceneMap.get(sceneId);
+  const i = parseInt(e.currentTarget.dataset.i, 10);
+  const ch = scene.choices[i];
+
+  // 履歴保存
+  State.history.push({
+    sceneId,
+    factors: JSON.parse(JSON.stringify(State.factors))
+  });
+
+  // 因子加点
+  if (ch.effect){
+    for (const [k, v] of Object.entries(ch.effect)){
+      if (State.factors[k] === undefined) continue;
+      State.factors[k] += v;
+    }
+  }
+
+  // 次へ
+  const nextId = ch.next || nextSceneId(sceneId);
+  State.idx = State.order.indexOf(nextId);
+  if (State.idx < 0) State.idx = State.order.length - 1; // セーフティ
+  render();
+}
+
+function nextSceneId(id){
+  const i = State.order.indexOf(id);
+  return State.order[i+1] || "result";
+}
+
+function goBack(){
+  if (State.history.length === 0) return;
+  const last = State.history.pop();
+  State.factors = last.factors;
+  State.idx = Math.max(0, State.order.indexOf(last.sceneId));
+  render();
+}
+
+function stepText(){
+  const endIndex = State.order.indexOf("result");
+  if (State.order[State.idx] === "result") return `診断完了`;
+  return `${State.idx}/${endIndex} 問`;
+}
+
+// ====== 結果計算・表示 ======
+function signBit(x){ return x > 0 ? 1 : 0; } // 0は左側（0）扱い
+function resultIndex(){
+  // ビット順: anx, cau, dep, exp, ide
+  const bits = [
+    signBit(State.factors.anx),
+    signBit(State.factors.cau),
+    signBit(State.factors.dep),
+    signBit(State.factors.exp),
+    signBit(State.factors.ide)
+  ];
+  return parseInt(bits.join(""), 2);
+}
+
+function factorTable(){
+  const rows = FACTORS.map(f => {
+    const v = State.factors[f.key] || 0;
+    const side = v > 0 ? f.labelR : f.labelL;
+    const val = (v>0?"+":"") + v;
+    return `<div class="row" style="justify-content:space-between;"><span>${f.name}</span><span>${side} <span class="muted">(${val})</span></span></div>`;
+  }).join("");
+  return `<div class="grid2">${rows}</div>`;
+}
+
+function resultView(){
+  const idx = resultIndex();
+  const book = TYPE_BOOK[idx];
+  const bits = book.code.replace("T","");
+  const legend = FACTORS.map((f, i) => {
+    const b = parseInt(bits[i], 10);
+    return `${f.name.split("（")[0]}：<strong>${b?f.labelR:f.labelL}</strong>`;
+  }).join("／");
+
+  const shareText = encodeURIComponent(`こいのまえ｜5因子診断結果\n${book.name}（${book.code}）\n${book.copy}`);
+  const shareUrl = "https://x.com/intent/tweet?text=" + shareText;
+
+  return `
+    <div class="center">
+      <span class="result-badge">${escapeHtml(book.name)}</span>
+      <div class="sub" style="margin-top:8px;">コード: ${book.code}（${bits}）</div>
+    </div>
+    <p style="margin-top:12px;">${escapeHtml(book.copy)}</p>
+    <div class="card" style="margin-top:12px;">${factorTable()}</div>
+    <div class="row" style="margin-top:16px; gap:8px; flex-wrap:wrap;">
+      <a class="btn" href="${shareUrl}" target="_blank" rel="noopener">Xで結果をシェア</a>
+      <a class="btn primary" href="#" onclick="location.reload(); return false;">最初からやり直す</a>
+    </div>
+    <p class="small" style="margin-top:8px;">※ タイプ名・コピーはダミーです。<br>「TYPE_BOOK」を32件すべて正式名称に置換してください。</p>
+  `;
+}
+
+// ====== util ======
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, s => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[s]);
+}
+
+// 初期描画
+render();
+</script>
+</body>
+</html>
